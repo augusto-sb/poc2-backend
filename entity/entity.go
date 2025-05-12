@@ -1,11 +1,16 @@
 package entity
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
-	"sort"
+	"os"
 	"strconv"
-	"sync"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 type Entity struct {
@@ -14,6 +19,31 @@ type Entity struct {
 	Description string
 }
 
+const dbName string = "poc2"
+
+var coll *mongo.Collection
+var seedData []Entity = []Entity{
+	Entity{
+		Id:          0,
+		Name:        "First",
+		Description: "the first element.",
+	},
+	Entity{
+		Id:          1,
+		Name:        "Second",
+		Description: "the second element.",
+	},
+	Entity{
+		Id:          2,
+		Name:        "Third",
+		Description: "the third element.",
+	},
+	Entity{
+		Id:          3,
+		Name:        "Fourth",
+		Description: "the fourth element.",
+	},
+}
 var dataBase []Entity = []Entity{
 	Entity{
 		Id:          0,
@@ -36,7 +66,35 @@ var dataBase []Entity = []Entity{
 		Description: "the fourth element.",
 	},
 }
-var mu sync.Mutex = sync.Mutex{}
+
+func init() {
+	uri := os.Getenv("MONGODB_URI")
+	if uri == "" {
+		panic("MONGODB_URI missing")
+	}
+	client, err := mongo.Connect(options.Client().ApplyURI(uri))
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		if err := client.Disconnect(context.TODO()); err != nil {
+			panic(err)
+		}
+	}()
+	listDatabasesResult, err := client.ListDatabases(context.TODO(), nil)
+	var exists bool = false
+	for _, v := range listDatabasesResult.Databases {
+		if v.Name == dbName {
+			exists = true
+		}
+	}
+	if exists {
+		return
+	}
+	database := client.Database(dbName)
+	coll = database.Collection("entities")
+	coll.InsertMany(context.TODO(), seedData) // res, err :=
+}
 
 func GetEntities(rw http.ResponseWriter, req *http.Request) {
 	var page uint64 = 0
@@ -44,6 +102,7 @@ func GetEntities(rw http.ResponseWriter, req *http.Request) {
 	var sortKey string = ""
 	var sortDirection bool = true
 	var err error
+
 	query := req.URL.Query()
 	querySortKeyVal, querySortKeyOk := query["sort.key"]
 	if querySortKeyOk && len(querySortKeyVal) == 1 {
@@ -75,43 +134,40 @@ func GetEntities(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	from := page * size
-	to := ((page + 1) * size)
-	if to > uint64(len(dataBase)) {
-		to = uint64(len(dataBase))
-	}
-	mu.Lock()
+
+	opts := options.Find()
+	opts.SetLimit(int64(size))
+	opts.SetSkip(int64(page * size))
 	if sortKey != "" {
-		switch sortKey {
-		case "Id":
-			sort.Slice(dataBase, func(i, j int) bool {
-				if sortDirection {
-					return dataBase[i].Id > dataBase[j].Id
-				}
-				return dataBase[i].Id < dataBase[j].Id
-			})
-		case "Name":
-			sort.Slice(dataBase, func(i, j int) bool {
-				if sortDirection {
-					return dataBase[i].Name > dataBase[j].Name
-				}
-				return dataBase[i].Name < dataBase[j].Name
-			})
-		case "Description":
-			sort.Slice(dataBase, func(i, j int) bool {
-				if sortDirection {
-					return dataBase[i].Description > dataBase[j].Description
-				}
-				return dataBase[i].Description < dataBase[j].Description
-			})
+		if sortDirection {
+			opts.SetSort(bson.D{{sortKey, 1}})
+		} else {
+			opts.SetSort(bson.D{{sortKey, -1}})
 		}
 	}
+	cursor, err := coll.Find(context.TODO(), nil /*bson.D{{"name", "Bob"}} filter*/, opts)
+	if err != nil {
+		rw.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	var results []bson.M
+	err = cursor.All(context.TODO(), &results)
+	if err != nil {
+		rw.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	count, err := coll.CountDocuments(context.TODO(), nil)
+	err = cursor.All(context.TODO(), &results)
+	if err != nil {
+		rw.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	send := struct {
 		Results any
-		Count   int
-	}{Results: dataBase[from:to], Count: len(dataBase)}
+		Count   int64
+	}{Results: results, Count: count}
 	jsonByteArr, err := json.Marshal(send)
-	mu.Unlock()
 	if err != nil {
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
@@ -133,14 +189,20 @@ func GetEntity(rw http.ResponseWriter, req *http.Request) {
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	mu.Lock()
-	for _, v := range dataBase {
-		if v.Id == id {
-			jsonByteArr, err = json.Marshal(v)
-			break
-		}
+
+	var result bson.M
+	err = coll.FindOne(
+		context.TODO(),
+		//bson.D{{"_id", id}},
+		bson.D{{"Id", id}},
+		nil,
+	).Decode(&result)
+	if err != nil {
+		fmt.Println(err)
+		rw.WriteHeader(http.StatusInternalServerError)
+		return
 	}
-	mu.Unlock()
+	jsonByteArr, err = json.Marshal(result)
 	if err != nil {
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
@@ -166,7 +228,6 @@ func RemoveEntity(rw http.ResponseWriter, req *http.Request) {
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	mu.Lock()
 	for i, v := range dataBase {
 		if v.Id == id {
 			dataBase[i] = dataBase[len(dataBase)-1]
@@ -175,7 +236,6 @@ func RemoveEntity(rw http.ResponseWriter, req *http.Request) {
 			break
 		}
 	}
-	mu.Unlock()
 	if isDeleted {
 		rw.WriteHeader(http.StatusNoContent)
 	} else {
@@ -223,7 +283,6 @@ func AddEntity(rw http.ResponseWriter, req *http.Request) {
 		e.Description = valDescription.(string)
 	}
 	//generate id and append
-	mu.Lock()
 	for _, v := range dataBase {
 		if v.Id > id {
 			id = v.Id
@@ -231,7 +290,6 @@ func AddEntity(rw http.ResponseWriter, req *http.Request) {
 	}
 	e.Id = id + 1
 	dataBase = append(dataBase, e)
-	mu.Unlock()
 	rw.WriteHeader(http.StatusCreated)
 	jsonByteArr, err := json.Marshal(e)
 	if err != nil {
@@ -287,7 +345,6 @@ func UpdateEntity(rw http.ResponseWriter, req *http.Request) {
 		//is ok!
 	}
 	//find and update
-	mu.Lock()
 	for i, v := range dataBase {
 		if v.Id == id {
 			dataBase[i].Name = valName.(string)
@@ -296,7 +353,6 @@ func UpdateEntity(rw http.ResponseWriter, req *http.Request) {
 			break
 		}
 	}
-	mu.Unlock()
 	if isUpdated {
 		rw.WriteHeader(http.StatusNoContent)
 	} else {
