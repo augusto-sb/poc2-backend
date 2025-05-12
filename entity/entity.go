@@ -88,11 +88,11 @@ func init() {
 			exists = true
 		}
 	}
+	database := client.Database(dbName)
+	coll = database.Collection("entities")
 	if exists {
 		return
 	}
-	database := client.Database(dbName)
-	coll = database.Collection("entities")
 	coll.InsertMany(context.TODO(), seedData) // res, err :=
 }
 
