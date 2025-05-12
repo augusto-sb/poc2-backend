@@ -76,11 +76,6 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-	defer func() {
-		if err := client.Disconnect(context.TODO()); err != nil {
-			panic(err)
-		}
-	}()
 	listDatabasesResult, err := client.ListDatabases(context.TODO(), nil)
 	var exists bool = false
 	for _, v := range listDatabasesResult.Databases {
