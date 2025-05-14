@@ -3,6 +3,7 @@ package router
 import (
 	"net/http"
 	"os"
+	"strings"
 
 	"example.com/auth"
 	"example.com/entity"
@@ -18,6 +19,19 @@ func corsHandler(rw http.ResponseWriter, req *http.Request) {
 	rw.WriteHeader(200)
 }
 
+func standarizedContextPath() string {
+	t := os.Getenv("CONTEXT_PATH")
+	restul := ""
+	parts := strings.Split(t, "/")
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		restul += "/" + p
+	}
+	return restul
+}
+
 func init() {
 	var corsOrigin = os.Getenv("CORS_ORIGIN")
 	if corsOrigin != "" {
@@ -30,11 +44,7 @@ func init() {
 			})
 		}
 	}
-	var contextPath string
-	contextPath = os.Getenv("CONTEXT_PATH")
-	if contextPath == "" {
-		contextPath = "/backend"
-	}
+	var contextPath string = standarizedContextPath()
 	Mux = http.NewServeMux()
 	Mux.HandleFunc("/", http.NotFound)
 	Mux.HandleFunc("OPTIONS /", corsMiddleware(corsHandler))
