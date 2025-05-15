@@ -3,92 +3,106 @@ package entity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
+	"time"
 
+    "go.mongodb.org/mongo-driver/v2/mongo/readpref"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 type Entity struct {
-	Id          uint64
-	Name        string
-	Description string
+	Id          bson.ObjectID `bson:"_id,omitempty"`
+	Name        string `bson:"name"`
+	Description string `bson:"description"`
 }
 
 const dbName string = "poc2"
+const collectionName string = "entities"
 
 var coll *mongo.Collection
 var seedData []Entity = []Entity{
 	Entity{
-		Id:          0,
 		Name:        "First",
 		Description: "the first element.",
 	},
 	Entity{
-		Id:          1,
 		Name:        "Second",
 		Description: "the second element.",
 	},
 	Entity{
-		Id:          2,
 		Name:        "Third",
 		Description: "the third element.",
 	},
 	Entity{
-		Id:          3,
-		Name:        "Fourth",
-		Description: "the fourth element.",
-	},
-}
-var dataBase []Entity = []Entity{
-	Entity{
-		Id:          0,
-		Name:        "First",
-		Description: "the first element.",
-	},
-	Entity{
-		Id:          1,
-		Name:        "Second",
-		Description: "the second element.",
-	},
-	Entity{
-		Id:          2,
-		Name:        "Third",
-		Description: "the third element.",
-	},
-	Entity{
-		Id:          3,
 		Name:        "Fourth",
 		Description: "the fourth element.",
 	},
 }
 
+func gracefulShutdown(client *mongo.Client) {
+    s := make(chan os.Signal, 1)
+    signal.Notify(s, os.Interrupt)
+    signal.Notify(s, syscall.SIGTERM)
+    go func() {
+        <-s
+        fmt.Println("Sutting down gracefully.")
+        err := client.Disconnect(context.TODO());
+		if err != nil {
+			//panic(err)
+		}
+        os.Exit(0)
+    }()
+}
+
 func init() {
+	var err error
+	var res *mongo.InsertManyResult
+	// https://pkg.go.dev/go.mongodb.org/mongo-driver/v2
 	uri := os.Getenv("MONGODB_URI")
 	if uri == "" {
 		panic("MONGODB_URI missing")
 	}
-	client, err := mongo.Connect(options.Client().ApplyURI(uri))
+	opts := options.Client().ApplyURI(uri).SetTimeout(5 * time.Second)
+	client, err := mongo.Connect(opts)
 	if err != nil {
 		panic(err)
 	}
-	listDatabasesResult, err := client.ListDatabases(context.TODO(), nil)
+	ping := client.Ping(context.TODO(), readpref.Primary())
+	fmt.Println(ping)
+	go gracefulShutdown(client)
+	listDatabasesResult, err := client.ListDatabases(context.TODO(), bson.M{})
 	var exists bool = false
 	for _, v := range listDatabasesResult.Databases {
 		if v.Name == dbName {
 			exists = true
+			break
 		}
 	}
 	database := client.Database(dbName)
-	coll = database.Collection("entities")
+	coll = database.Collection(collectionName)
 	if exists {
 		return
 	}
-	coll.InsertMany(context.TODO(), seedData) // res, err :=
+	asdasd := options.IndexOptionsBuilder{}
+	index := mongo.IndexModel{
+		Keys: bson.D{{Key: "name", Value: 1}},
+		Options: asdasd.SetUnique(true),
+	}
+	coll.Indexes().CreateOne(context.TODO(), index)
+	res, err = coll.InsertMany(context.TODO(), seedData)
+	if(err == nil){
+		fmt.Println(res)
+	}else{
+		fmt.Println("error inserting seed data", err)
+	}
 }
 
 func GetEntities(rw http.ResponseWriter, req *http.Request) {
@@ -140,26 +154,26 @@ func GetEntities(rw http.ResponseWriter, req *http.Request) {
 			opts.SetSort(bson.D{{sortKey, -1}})
 		}
 	}
-	cursor, err := coll.Find(context.TODO(), nil /*bson.D{{"name", "Bob"}} filter*/, opts)
+	filter := bson.D{}
+	cursor, err := coll.Find(context.TODO(), filter, opts)
 	if err != nil {
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	var results []bson.M
+	var results []Entity
 	err = cursor.All(context.TODO(), &results)
 	if err != nil {
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	count, err := coll.CountDocuments(context.TODO(), nil)
-	err = cursor.All(context.TODO(), &results)
+	count, err := coll.CountDocuments(context.TODO(), filter)
 	if err != nil {
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	send := struct {
-		Results any
+		Results []Entity
 		Count   int64
 	}{Results: results, Count: count}
 	jsonByteArr, err := json.Marshal(send)
@@ -175,35 +189,34 @@ func GetEntities(rw http.ResponseWriter, req *http.Request) {
 
 func GetEntity(rw http.ResponseWriter, req *http.Request) {
 	var idParam string = req.PathValue("id")
-	var id uint64
 	var err error
 	var jsonByteArr []byte = []byte{}
+	var objId bson.ObjectID
+	var result Entity
 
-	id, err = strconv.ParseUint(idParam, 10, 64)
+	objId, err = bson.ObjectIDFromHex(idParam)
 	if err != nil {
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	var result bson.M
 	err = coll.FindOne(
 		context.TODO(),
-		//bson.D{{"_id", id}},
-		bson.D{{"Id", id}},
+		bson.M{"_id": objId},
 		nil,
 	).Decode(&result)
 	if err != nil {
-		fmt.Println(err)
-		rw.WriteHeader(http.StatusInternalServerError)
+		if(errors.Is(err, mongo.ErrNoDocuments)){
+			rw.WriteHeader(http.StatusNotFound)
+		}else{
+			rw.WriteHeader(http.StatusInternalServerError)
+		}
 		return
 	}
+
 	jsonByteArr, err = json.Marshal(result)
 	if err != nil {
 		rw.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	if len(jsonByteArr) == 0 {
-		rw.WriteHeader(http.StatusNotFound)
 		return
 	}
 	_, err = rw.Write(jsonByteArr)
@@ -214,24 +227,22 @@ func GetEntity(rw http.ResponseWriter, req *http.Request) {
 
 func RemoveEntity(rw http.ResponseWriter, req *http.Request) {
 	var idParam string = req.PathValue("id")
-	var id uint64
 	var err error
-	var isDeleted bool = false
+	var result *mongo.DeleteResult
+	var objId bson.ObjectID
 
-	id, err = strconv.ParseUint(idParam, 10, 64)
+	objId, err = bson.ObjectIDFromHex(idParam)
 	if err != nil {
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	for i, v := range dataBase {
-		if v.Id == id {
-			dataBase[i] = dataBase[len(dataBase)-1]
-			dataBase = dataBase[:len(dataBase)-1]
-			isDeleted = true
-			break
-		}
+	result, err = coll.DeleteOne(context.TODO(), bson.M{"_id": objId})
+	if err != nil {
+		rw.WriteHeader(http.StatusInternalServerError)
+		return
 	}
-	if isDeleted {
+
+	if result.DeletedCount == 1 {
 		rw.WriteHeader(http.StatusNoContent)
 	} else {
 		rw.WriteHeader(http.StatusNotFound)
@@ -241,9 +252,11 @@ func RemoveEntity(rw http.ResponseWriter, req *http.Request) {
 func AddEntity(rw http.ResponseWriter, req *http.Request) {
 	var e Entity
 	var tmp map[string]any
-	var id uint64 = 0
+	var insertOneResult *mongo.InsertOneResult
+	var err error
+	var jsonByteArr []byte
 
-	err := json.NewDecoder(req.Body).Decode(&tmp) //decode to map/any instead of struct to validate not extra keys...
+	err = json.NewDecoder(req.Body).Decode(&tmp) //decode to map/any instead of struct to validate not extra keys...
 	if err != nil {
 		rw.WriteHeader(http.StatusBadRequest)
 		return
@@ -277,17 +290,23 @@ func AddEntity(rw http.ResponseWriter, req *http.Request) {
 	case string:
 		e.Description = valDescription.(string)
 	}
-	//generate id and append
-	for _, v := range dataBase {
-		if v.Id > id {
-			id = v.Id
-		}
-	}
-	e.Id = id + 1
-	dataBase = append(dataBase, e)
-	rw.WriteHeader(http.StatusCreated)
-	jsonByteArr, err := json.Marshal(e)
+
+	insertOneResult, err = coll.InsertOne(context.TODO(), e, nil);
 	if err != nil {
+		if(mongo.IsDuplicateKeyError(err)){
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte("ese Name ya está en uso!"))
+		}else{
+			rw.WriteHeader(http.StatusInternalServerError)
+		}
+		return
+	}
+	e.Id = insertOneResult.InsertedID.(bson.ObjectID)
+
+	rw.WriteHeader(http.StatusCreated)
+	jsonByteArr, err = json.Marshal(e)
+	if err != nil {
+		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	rw.Write(jsonByteArr)
@@ -295,15 +314,15 @@ func AddEntity(rw http.ResponseWriter, req *http.Request) {
 
 func UpdateEntity(rw http.ResponseWriter, req *http.Request) {
 	var idParam string = req.PathValue("id")
-	var id uint64
 	var err error
-	var isUpdated bool = false
-	id, err = strconv.ParseUint(idParam, 10, 64)
+	var tmp map[string]any
+	var objId bson.ObjectID
+
+	objId, err = bson.ObjectIDFromHex(idParam)
 	if err != nil {
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	var tmp map[string]any
 
 	err = json.NewDecoder(req.Body).Decode(&tmp) //decode to map/any instead of struct to validate not extra keys...
 	if err != nil {
@@ -340,15 +359,14 @@ func UpdateEntity(rw http.ResponseWriter, req *http.Request) {
 		//is ok!
 	}
 	//find and update
-	for i, v := range dataBase {
-		if v.Id == id {
-			dataBase[i].Name = valName.(string)
-			dataBase[i].Description = valDescription.(string)
-			isUpdated = true
-			break
-		}
+	opts := options.UpdateOne().SetUpsert(false)
+	filter := bson.D{{"_id", objId}}
+	update := bson.D{{"$set", bson.D{{"Name", valName.(string)},{"Description", valDescription.(string)}}}}
+	result, err := coll.UpdateOne(context.TODO(), filter, update, opts)
+	if err != nil {
+		fmt.Println(err)
 	}
-	if isUpdated {
+	if result.MatchedCount != 0 {
 		rw.WriteHeader(http.StatusNoContent)
 	} else {
 		rw.WriteHeader(http.StatusNotFound)
