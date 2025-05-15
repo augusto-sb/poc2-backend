@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
-	"time"
 
     "go.mongodb.org/mongo-driver/v2/mongo/readpref"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -65,20 +64,26 @@ func gracefulShutdown(client *mongo.Client) {
 func init() {
 	var err error
 	var res *mongo.InsertManyResult
+	var client *mongo.Client
+	var listDatabasesResult mongo.ListDatabasesResult
 	// https://pkg.go.dev/go.mongodb.org/mongo-driver/v2
 	uri := os.Getenv("MONGODB_URI")
 	if uri == "" {
 		panic("MONGODB_URI missing")
 	}
-	opts := options.Client().ApplyURI(uri).SetTimeout(5 * time.Second)
-	client, err := mongo.Connect(opts)
+	client, err = mongo.Connect(options.Client().ApplyURI(uri))
+	go gracefulShutdown(client)
 	if err != nil {
 		panic(err)
 	}
-	ping := client.Ping(context.TODO(), readpref.Primary())
-	fmt.Println(ping)
-	go gracefulShutdown(client)
-	listDatabasesResult, err := client.ListDatabases(context.TODO(), bson.M{})
+	err = client.Ping(context.TODO(), readpref.Primary())
+	if(err != nil){
+		panic("Ping")
+	}
+	listDatabasesResult, err = client.ListDatabases(context.TODO(), bson.M{})
+	if(err != nil){
+		panic("ListDatabases")
+	}
 	var exists bool = false
 	for _, v := range listDatabasesResult.Databases {
 		if v.Name == dbName {
@@ -91,10 +96,10 @@ func init() {
 	if exists {
 		return
 	}
-	asdasd := options.IndexOptionsBuilder{}
+	indexOpts := options.IndexOptionsBuilder{}
 	index := mongo.IndexModel{
 		Keys: bson.D{{Key: "name", Value: 1}},
-		Options: asdasd.SetUnique(true),
+		Options: indexOpts.SetUnique(true),
 	}
 	coll.Indexes().CreateOne(context.TODO(), index)
 	res, err = coll.InsertMany(context.TODO(), seedData)
