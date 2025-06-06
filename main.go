@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 
 	"example.com/router"
 )
@@ -18,11 +20,32 @@ func main() {
 	var err error
 	var listener net.Listener
 	var port string = os.Getenv("PORT")
+	var srv http.Server = http.Server{
+		Handler: router.Mux,
+	}
+
 	if port == "" {
 		port = "8080"
 	}
 	listener, err = net.Listen("tcp4", "0.0.0.0:"+port)
 	handleError(err)
-	err = http.Serve(listener, router.Mux)
-	handleError(err)
+
+	idleConnsClosed := make(chan struct{})
+	go func() {
+		sigint := make(chan os.Signal, 1)
+		signal.Notify(sigint, os.Interrupt)
+		<-sigint
+
+		// We received an interrupt signal, shut down.
+		err := srv.Shutdown(context.Background());
+		handleError(err)
+		close(idleConnsClosed)
+	}()
+
+	err = srv.Serve(listener)
+	if err != http.ErrServerClosed {
+		handleError(err)
+	}
+
+	<-idleConnsClosed
 }
