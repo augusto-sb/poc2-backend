@@ -27,13 +27,13 @@ func init() {
 	introspectionEndpoint = os.Getenv("AUTH_INTROSPECTION_ENDPOINT")
 	privateClientId = os.Getenv("AUTH_CLIENT_ID")
 	privateClientSecret = os.Getenv("AUTH_CLIENT_SECRET")
-	if(os.Getenv("AUTH_ENABLED") == "false"){
+	if os.Getenv("AUTH_ENABLED") == "false" {
 		skipAuth = true
 	}
 }
 
 func Middleware(next http.HandlerFunc, role string) http.HandlerFunc {
-	if(skipAuth){
+	if skipAuth {
 		return next
 	}
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {

@@ -37,7 +37,7 @@ func main() {
 		<-sigint
 
 		// We received an interrupt signal, shut down.
-		err := srv.Shutdown(context.Background());
+		err := srv.Shutdown(context.Background())
 		handleError(err)
 		close(idleConnsClosed)
 	}()

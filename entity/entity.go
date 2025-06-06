@@ -11,16 +11,16 @@ import (
 	"strconv"
 	"syscall"
 
-    "go.mongodb.org/mongo-driver/v2/mongo/readpref"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/mongo/readpref"
 )
 
 type Entity struct {
 	Id          bson.ObjectID `bson:"_id,omitempty"`
-	Name        string `bson:"name"`
-	Description string `bson:"description"`
+	Name        string        `bson:"name"`
+	Description string        `bson:"description"`
 }
 
 const dbName string = "poc2"
@@ -47,18 +47,18 @@ var seedData []Entity = []Entity{
 }
 
 func gracefulShutdown(client *mongo.Client) {
-    s := make(chan os.Signal, 1)
-    signal.Notify(s, os.Interrupt)
-    signal.Notify(s, syscall.SIGTERM)
-    go func() {
-        <-s
-        fmt.Println("Sutting down gracefully.")
-        err := client.Disconnect(context.TODO());
+	s := make(chan os.Signal, 1)
+	signal.Notify(s, os.Interrupt)
+	signal.Notify(s, syscall.SIGTERM)
+	go func() {
+		<-s
+		fmt.Println("Sutting down gracefully.")
+		err := client.Disconnect(context.TODO())
 		if err != nil {
 			//panic(err)
 		}
-        os.Exit(0)
-    }()
+		os.Exit(0)
+	}()
 }
 
 func init() {
@@ -77,11 +77,11 @@ func init() {
 		panic(err)
 	}
 	err = client.Ping(context.TODO(), readpref.Primary())
-	if(err != nil){
+	if err != nil {
 		panic("Ping")
 	}
 	listDatabasesResult, err = client.ListDatabases(context.TODO(), bson.M{})
-	if(err != nil){
+	if err != nil {
 		panic("ListDatabases")
 	}
 	var exists bool = false
@@ -98,14 +98,14 @@ func init() {
 	}
 	indexOpts := options.IndexOptionsBuilder{}
 	index := mongo.IndexModel{
-		Keys: bson.D{{Key: "name", Value: 1}},
+		Keys:    bson.D{{Key: "name", Value: 1}},
 		Options: indexOpts.SetUnique(true),
 	}
 	coll.Indexes().CreateOne(context.TODO(), index)
 	res, err = coll.InsertMany(context.TODO(), seedData)
-	if(err == nil){
+	if err == nil {
 		fmt.Println(res)
-	}else{
+	} else {
 		fmt.Println("error inserting seed data", err)
 	}
 }
@@ -211,9 +211,9 @@ func GetEntity(rw http.ResponseWriter, req *http.Request) {
 		nil,
 	).Decode(&result)
 	if err != nil {
-		if(errors.Is(err, mongo.ErrNoDocuments)){
+		if errors.Is(err, mongo.ErrNoDocuments) {
 			rw.WriteHeader(http.StatusNotFound)
-		}else{
+		} else {
 			rw.WriteHeader(http.StatusInternalServerError)
 		}
 		return
@@ -296,12 +296,12 @@ func AddEntity(rw http.ResponseWriter, req *http.Request) {
 		e.Description = valDescription.(string)
 	}
 
-	insertOneResult, err = coll.InsertOne(context.TODO(), e, nil);
+	insertOneResult, err = coll.InsertOne(context.TODO(), e, nil)
 	if err != nil {
-		if(mongo.IsDuplicateKeyError(err)){
+		if mongo.IsDuplicateKeyError(err) {
 			rw.WriteHeader(http.StatusBadRequest)
 			rw.Write([]byte("ese Name ya está en uso!"))
-		}else{
+		} else {
 			rw.WriteHeader(http.StatusInternalServerError)
 		}
 		return
@@ -366,7 +366,7 @@ func UpdateEntity(rw http.ResponseWriter, req *http.Request) {
 	//find and update
 	opts := options.UpdateOne().SetUpsert(false)
 	filter := bson.D{{"_id", objId}}
-	update := bson.D{{"$set", bson.D{{"Name", valName.(string)},{"Description", valDescription.(string)}}}}
+	update := bson.D{{"$set", bson.D{{"Name", valName.(string)}, {"Description", valDescription.(string)}}}}
 	result, err := coll.UpdateOne(context.TODO(), filter, update, opts)
 	if err != nil {
 		fmt.Println(err)
