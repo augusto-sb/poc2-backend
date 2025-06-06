@@ -1,4 +1,4 @@
-FROM docker.io/golang:1.22.12-alpine3.21 AS compiler
+FROM docker.io/library/golang:1.22.12-alpine3.21 AS compiler
 WORKDIR /app/
 COPY . .
 RUN go build -o main .
