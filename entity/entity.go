@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
 	"strconv"
-	"syscall"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -46,25 +44,20 @@ var seedData []Entity = []Entity{
 	},
 }
 
-func gracefulShutdown(client *mongo.Client) {
-	s := make(chan os.Signal, 1)
-	signal.Notify(s, os.Interrupt)
-	signal.Notify(s, syscall.SIGTERM)
-	go func() {
-		<-s
-		fmt.Println("Sutting down gracefully.")
-		err := client.Disconnect(context.TODO())
-		if err != nil {
-			//panic(err)
-		}
-		os.Exit(0)
-	}()
+func GracefulShutdown() {
+	fmt.Println("Sutting down gracefully.")
+	err := client.Disconnect(context.TODO())
+	if err != nil {
+		//panic(err)
+	}
+
 }
+
+var client *mongo.Client
 
 func init() {
 	var err error
 	var res *mongo.InsertManyResult
-	var client *mongo.Client
 	var listDatabasesResult mongo.ListDatabasesResult
 	// https://pkg.go.dev/go.mongodb.org/mongo-driver/v2
 	uri := os.Getenv("MONGODB_URI")
@@ -72,7 +65,6 @@ func init() {
 		panic("MONGODB_URI missing")
 	}
 	client, err = mongo.Connect(options.Client().ApplyURI(uri))
-	go gracefulShutdown(client)
 	if err != nil {
 		panic(err)
 	}

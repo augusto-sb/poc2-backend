@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 
+	"example.com/entity"
 	"example.com/router"
 )
 
@@ -39,6 +40,8 @@ func main() {
 		// We received an interrupt signal, shut down.
 		err := srv.Shutdown(context.Background())
 		handleError(err)
+		entity.GracefulShutdown()
+		//os.Exit(0)
 		close(idleConnsClosed)
 	}()
 
