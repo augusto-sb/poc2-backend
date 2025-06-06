@@ -20,15 +20,22 @@ var introspectionEndpoint string = "https://example.com/auth/realms/REALM/protoc
 var privateClientId string = "client"
 var privateClientSecret string = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 var httpClient http.Client = http.Client{}
+var skipAuth bool = false
 
 func init() {
 	//using rbac for simplicity, could use resource/scope based authorization for large project
 	introspectionEndpoint = os.Getenv("AUTH_INTROSPECTION_ENDPOINT")
 	privateClientId = os.Getenv("AUTH_CLIENT_ID")
 	privateClientSecret = os.Getenv("AUTH_CLIENT_SECRET")
+	if(os.Getenv("AUTH_ENABLED") == "false"){
+		skipAuth = true
+	}
 }
 
 func Middleware(next http.HandlerFunc, role string) http.HandlerFunc {
+	if(skipAuth){
+		return next
+	}
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		//req.Header = map[string][]string
 		authHeader, ok := req.Header["Authorization"]
